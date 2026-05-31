@@ -3,24 +3,47 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 class TemporalGraphLearning(nn.Module):
-    def __init__(self, d_model, dropout=0.1, alpha=0.2):
+    def __init__(self, d_model, dropout=0.1, alpha=0.2, temperature=3.0):
         super().__init__()
         self.d_model = d_model
-        self.scale = d_model ** -0.5
+        self.temperature = temperature  # Moderate temperature: 3.0 keeps gradients alive and preserves structure
+        
+        # Main query/key projections
         self.W_q = nn.Linear(d_model, d_model)
         self.W_k = nn.Linear(d_model, d_model)
+        
+        # Node-specific embeddings to capture per-node uniqueness
+        # These ensure each node has a distinct "identity" for different connection patterns
+        self.node_bias_q = nn.Parameter(torch.randn(d_model) * 0.1)
+        self.node_bias_k = nn.Parameter(torch.randn(d_model) * 0.1)
+        
+        # Xavier initialization for main weights
+        nn.init.xavier_uniform_(self.W_q.weight)
+        nn.init.xavier_uniform_(self.W_k.weight)
+        
         self.dropout = nn.Dropout(dropout)
-        self.leaky_relu = nn.LeakyReLU(alpha)
 
     def forward(self, H):
-        Q = self.W_q(H)
-        K = self.W_k(H)
-        scores = torch.matmul(Q, K.transpose(-2, -1)) * self.scale
-        scores = self.leaky_relu(scores)
-        A = F.softmax(scores, dim=-1)
-        I = torch.eye(A.size(1), device=A.device).unsqueeze(0)
-        A = A + I
-        A = A / A.sum(dim=-1, keepdim=True).clamp(min=1e-8)
+        # H: (B, N, d_model)
+        Q = self.W_q(H)  # (B, N, d_model)
+        K = self.W_k(H)  # (B, N, d_model)
+        
+        # Add node-specific biases to ensure per-node uniqueness
+        Q = Q + self.node_bias_q.unsqueeze(0).unsqueeze(0)  # (B, N, d_model)
+        K = K + self.node_bias_k.unsqueeze(0).unsqueeze(0)  # (B, N, d_model)
+        
+        # Compute attention scores
+        scores = torch.matmul(Q, K.transpose(-2, -1))  # (B, N, N)
+        
+        # Sigmoid with bias to keep values bounded away from 0/1
+        # A = sigmoid(T*s) * scale + bias keeps values in maintained range
+        # This prevents natural collapse to zero while allowing learned variation
+        A = torch.sigmoid(scores * self.temperature) * 0.6 + 0.2  # Maps to [0.2, 0.8]
+        
+        # Add strong diagonal for self-connections
+        I = torch.eye(A.size(1), device=A.device).unsqueeze(0)  # (1, N, N)
+        A = A + I * 1.0  # Diagonal: [1.2, 1.8], off-diagonal: [0.2, 0.8]
+        
         A = self.dropout(A)
         return A
     
@@ -252,9 +275,9 @@ class GlobalLocalForecasting(nn.Module):
 
 class TR_GNN_Linear(nn.Module):
     def __init__(self, N, T_in, T_out, d=32, hidden_dim=64, 
-                 dropout_temporal=0.2, dropout_gcn=0.3, dropout_forecast=0.3, GCN_Layer=5,dilation=3,kernel_size=7):
+                 dropout_temporal=0.2, dropout_gcn=0.3, dropout_forecast=0.3, GCN_Layer=5, dilation=3, kernel_size=7, graph_temperature=3.0):
         super().__init__()
-        self.graph_learn = TemporalGraphLearning(hidden_dim, dropout=dropout_gcn)
+        self.graph_learn = TemporalGraphLearning(hidden_dim, dropout=dropout_gcn, temperature=graph_temperature)
         
         # Use the FIXED TemporalConv (from previous step)
         self.temporal_conv = TemporalConv(N, T_in, hidden_dim, 
@@ -285,9 +308,9 @@ class TR_GNN_Linear(nn.Module):
 class TR_GNN_Attention(nn.Module):
     def __init__(self, N, T_in, T_out, d=32, hidden_dim=64,
                  dropout_temporal=0.2, dropout_gcn=0.3, dropout_forecast=0.3,
-                 GCN_Layer=5, kernel_size=7, dilation=3):          
+                 GCN_Layer=5, kernel_size=7, dilation=3, graph_temperature=3.0):          
         super().__init__()
-        self.graph_learn = TemporalGraphLearning(hidden_dim, dropout=dropout_gcn)
+        self.graph_learn = TemporalGraphLearning(hidden_dim, dropout=dropout_gcn, temperature=graph_temperature)
         self.temporal_conv = TemporalConv(N, T_in, hidden_dim,
                                           kernel_size=kernel_size, 
                                           dilation=dilation,        
@@ -310,13 +333,13 @@ class TR_GNN_Attention(nn.Module):
 class TR_GNN_MultiScale(nn.Module):
     def __init__(self, N, T_in, T_out, d=32, hidden_dim=64,
                  dropout_temporal=0.2, dropout_gcn=0.3, dropout_forecast=0.3,
-                 GCN_Layer=5, kernel_size=7, dilation=3):          
+                 GCN_Layer=5, kernel_size=7, dilation=3, graph_temperature=3.0):          
         super().__init__()
         self.temporal_conv = TemporalConv(N, T_in, hidden_dim,
                                           kernel_size=kernel_size,  
                                           dilation=dilation,        
                                           dropout=dropout_temporal)
-        self.graph_learn = TemporalGraphLearning(hidden_dim, dropout=dropout_gcn)
+        self.graph_learn = TemporalGraphLearning(hidden_dim, dropout=dropout_gcn, temperature=graph_temperature)
         self.dense_gcn = DenselyResidualGCN(hidden_dim, hidden_dim,
                                             dropout=dropout_gcn, layers=GCN_Layer)
         self.forecaster = MultiScaleForecasting(
@@ -335,9 +358,9 @@ class TR_GNN_MultiScale(nn.Module):
 class TR_GNN_GlobalLocal(nn.Module):
     def __init__(self, N, T_in, T_out, d=32, hidden_dim=64,
                  dropout_temporal=0.2, dropout_gcn=0.3, dropout_forecast=0.3,
-                 GCN_Layer=5, kernel_size=7, dilation=3):          
+                 GCN_Layer=5, kernel_size=7, dilation=3, graph_temperature=3.0):          
         super().__init__()
-        self.graph_learn = TemporalGraphLearning(hidden_dim, dropout=dropout_gcn)
+        self.graph_learn = TemporalGraphLearning(hidden_dim, dropout=dropout_gcn, temperature=graph_temperature)
         self.temporal_conv = TemporalConv(N, T_in, hidden_dim,
                                           kernel_size=kernel_size,  
                                           dilation=dilation,        

@@ -71,18 +71,29 @@ def train_model(
 
             pred, A = model(X)          # <-- unpack (Y_hat, A)
 
-            # 1. Task loss
-            mse_loss = criterion(pred, Y)
-
-            # 2. Temporal consistency: L2 penalty between adjacent time window graphs
-            #    A: (B, N, N) — consecutive samples = consecutive time windows
-            #    Encourages smooth graph evolution without freezing it
-            smooth_loss = nn.functional.mse_loss(A[:-1], A[1:].detach())
-
-            # 3. Sparsity: L1 penalty to keep graph sparse (optional but useful)
-            sparse_loss = torch.norm(A, p=1)
-
-            loss = mse_loss + lambda_smooth * smooth_loss + lambda_sparse * sparse_loss
+            # Prediction loss
+            pred_loss = criterion(pred, Y)
+            
+            # CRITICAL: Strong graph learning regularization
+            # The graph MUST learn diverse structures or prediction will suffer
+            off_diag_mask = 1 - torch.eye(A.size(1), device=A.device)
+            A_off_diag = A * off_diag_mask.unsqueeze(0)
+            
+            # Variance-based regularization: force structure diversity
+            A_mean = A_off_diag.mean()
+            variance = ((A_off_diag - A_mean) ** 2).mean()
+            
+            # Min-max spread: encourage edges to span the full [0.2, 0.8] range
+            # This forces learning of differentiated edge strengths
+            edge_spread = (A_off_diag.max() - A_off_diag.min())
+            
+            # Regularization terms weighted EQUALLY with prediction loss
+            # to create strong gradient pressure on graph parameters
+            graph_loss = (-variance * 100.0) + (-edge_spread * 50.0)
+            
+            # CRITICAL: Use weighted combination with EQUAL or HIGHER regularization
+            # If pred_loss ~0.17 and graph_loss contribution is ~-1, we need to scale
+            loss = pred_loss + graph_loss * 0.2  # Adjust multiplier to balance forces
 
             optimizer.zero_grad()
             loss.backward()
@@ -91,8 +102,7 @@ def train_model(
 
             total_loss += loss.item()
             loop.set_postfix(
-                mse=f"{mse_loss.item():.4f}",
-                smooth=f"{smooth_loss.item():.4f}"  # visible in tqdm so you can monitor it
+                loss=f"{loss.item():.4f}"
             )
 
         avg_train_loss = total_loss / len(train_loader)
