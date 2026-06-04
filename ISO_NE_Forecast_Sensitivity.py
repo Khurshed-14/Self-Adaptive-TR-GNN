@@ -31,7 +31,7 @@ from helper_functions import train_model, test_model, test_model_stepwise
 GRAPH_STRUCTURE = 'full'       # 'full' or 'target_in' (demand-driver graph)
 L2_ALPHA = 0.0005
 GRAPH_TEMPERATURE = 1.0
-SAVE_DIR = "Sens_Runs/SH"
+SAVE_DIR = "Sens_Runs/ISO_NE"
 RESULTS_CSV = os.path.join(SAVE_DIR, "ISO_NE_sensitivity_results.csv")
 
 RESULT_COLUMNS = [
@@ -363,7 +363,7 @@ def main():
     configs_to_run = build_sensitivity_configs(base_hparams)
     os.makedirs(SAVE_DIR, exist_ok=True)
 
-    print(f"\n⚙️ Sensitivity analysis — SH dataset")
+    print(f"\n⚙️ Sensitivity analysis — ISO_NE dataset")
     print(f"   Base: GCN=5, Hidden=64, Kernel=7, Dilation=3")
     print(f"   Total unique runs: {len(configs_to_run)}")
     print(f"   Results CSV: {RESULTS_CSV}")
@@ -390,7 +390,7 @@ def main():
             is_base,
         )
 
-    print(f"\n✅ SH sensitivity analysis completed. Results: {RESULTS_CSV}")
+    print(f"\n✅ ISO_NE sensitivity analysis completed. Results: {RESULTS_CSV}")
 
 
 if __name__ == "__main__":
