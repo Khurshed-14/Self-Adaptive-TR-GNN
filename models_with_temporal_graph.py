@@ -29,10 +29,11 @@ class TemporalGraphLearning(nn.Module):
         
         # Eq (4): v_i \in R^d - Feature vector for each factor 
         self.node_embed = nn.Parameter(torch.randn(N, d_model))
+        nn.init.uniform_(self.node_embed)
         
         # Eq (5): W \in R^{d \times d} - Trainable weight matrix
         self.W = nn.Parameter(torch.randn(d_model, d_model))
-        nn.init.xavier_uniform_(self.W)
+        nn.init.uniform_(self.W)
 
     def forward(self, H=None):
         # Eq (5) inner component: v_i^T W v_j for all nodes i, j

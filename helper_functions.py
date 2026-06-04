@@ -10,16 +10,150 @@ from sklearn.cluster import KMeans
 
 
 
-def validate(model, loader, criterion, device):
+def validate(model, loader, criterion, device, return_adjacency=False):
     model.eval()
     total_loss = 0.0
+    epoch_A = None
     with torch.no_grad(), tqdm(loader, desc="Validating", leave=False) as pbar:
         for X, Y in pbar:
             X, Y = X.to(device), Y.to(device)
-            pred, _ = model(X)      # <-- unpack tuple, discard A
+            pred, A = model(X)
             loss = criterion(pred, Y)
             total_loss += loss.item()
-    return total_loss / len(loader)
+            if return_adjacency and epoch_A is None:
+                epoch_A = A.detach().cpu().numpy()
+    avg_loss = total_loss / len(loader)
+    if return_adjacency:
+        return avg_loss, epoch_A
+    return avg_loss
+
+
+def _adjacency_save_path(save_path):
+    base, _ = os.path.splitext(save_path)
+    return f"{base}_adjacency.npy"
+
+
+def _adjacency_plot_path(save_path):
+    base, _ = os.path.splitext(save_path)
+    return f"{base}_adjacency.png"
+
+
+def _shorten_labels(names, max_len=14):
+    out = []
+    for name in names:
+        s = str(name)
+        out.append(s if len(s) <= max_len else s[: max_len - 1] + "\u2026")
+    return out
+
+
+def _normalize_adjacency(A):
+    """Ensure shape (num_heads, N, N) for plotting."""
+    A = np.asarray(A)
+    if A.ndim == 2:
+        return A[np.newaxis, ...]
+    return A
+
+
+def _save_adjacency_plot(
+    A,
+    plot_path,
+    feature_names=None,
+    demand_targeting=False,
+    target_idx=None,
+    val_loss=None,
+    vmin=0.0,
+    vmax=0.8,
+):
+    """Save a labeled adjacency heatmap, overwriting plot_path on each call."""
+    A_heads = _normalize_adjacency(A)
+    num_heads, n, _ = A_heads.shape
+
+    if feature_names is not None and len(feature_names) == n:
+        labels = _shorten_labels(feature_names)
+    else:
+        labels = [f"F{i}" for i in range(n)]
+
+    plot_dir = os.path.dirname(plot_path)
+    if plot_dir and not os.path.exists(plot_dir):
+        os.makedirs(plot_dir, exist_ok=True)
+
+    side = max(6.0, n * 0.35)
+    fig, axes = plt.subplots(1, num_heads, figsize=(side * num_heads + 0.8, side + 0.6))
+    if num_heads == 1:
+        axes = [axes]
+
+    mid = (vmin + vmax) * 0.5
+    cell_fs = max(3.5, min(7.0, 90 / n))
+    last_im = None
+    for h, ax in enumerate(axes):
+        mat = A_heads[h]
+        last_im = ax.imshow(mat, cmap='YlOrRd', vmin=vmin, vmax=vmax, aspect='equal')
+        ax.set_title(f'Head {h + 1}' if num_heads > 1 else 'Adjacency', fontsize=10, fontweight='bold')
+        ax.set_xticks(range(n))
+        ax.set_yticks(range(n))
+        ax.set_xticklabels(labels, rotation=55, ha='right', fontsize=6)
+        ax.set_yticklabels(labels, fontsize=6)
+        ax.set_xlabel('From feature (j)', fontsize=7)
+        if h == 0:
+            ax.set_ylabel('To feature (i)', fontsize=7)
+        for i in range(n):
+            for j in range(n):
+                val = mat[i, j]
+                color = 'white' if val > mid else 'black'
+                ax.text(j, i, f'{val:.2f}', ha='center', va='center',
+                        color=color, fontsize=cell_fs, fontweight='bold')
+
+    if demand_targeting and feature_names is not None and target_idx is not None:
+        target_name = feature_names[target_idx]
+        title = f'What Drives {target_name} — Best Model'
+    else:
+        title = 'Adjacency Matrix — Best Model'
+    if val_loss is not None:
+        title += f'\nVal Loss: {val_loss:.6f}'
+
+    fig.suptitle(title, fontsize=13, fontweight='bold')
+    fig.colorbar(last_im, ax=axes, label='Adjacency Weight', shrink=0.8)
+    plt.tight_layout()
+    plt.savefig(plot_path, dpi=100, bbox_inches='tight')
+    plt.close()
+
+def _adjacency_l2_reg(A, demand_targeting=False, target_idx=None):
+    """
+    L2 penalty on off-diagonal adjacency weights.
+
+    When demand_targeting is True, the target row is excluded so regularization
+    does not penalize learned drivers into the demand node (target_in graphs).
+    """
+    N = A.size(-1)
+    identity_mask = torch.eye(N, device=A.device)
+    off_diag_mask = 1.0 - identity_mask
+    if demand_targeting:
+        if target_idx is None:
+            raise ValueError("target_idx is required when demand_targeting_adjacency=True")
+        off_diag_mask[target_idx, :] = 0.0
+    off_diagonal_A = A * off_diag_mask
+    return torch.mean(off_diagonal_A ** 2)
+
+
+def _build_optimizer(model, lr, weight_decay):
+    """Graph-learning params: no weight decay; all other params: normal decay."""
+    if hasattr(model, 'graph_learn'):
+        graph_param_ids = {id(p) for p in model.graph_learn.parameters()}
+        param_groups = [
+            {
+                'params': [p for p in model.parameters() if id(p) in graph_param_ids],
+                'lr': lr,
+                'weight_decay': 0.0,
+            },
+            {
+                'params': [p for p in model.parameters() if id(p) not in graph_param_ids],
+                'lr': lr,
+                'weight_decay': weight_decay,
+            },
+        ]
+        return torch.optim.Adam(param_groups)
+    return torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
+
 
 # Training function with TensorBoard logging
 def train_model(
@@ -33,21 +167,34 @@ def train_model(
     scheduler_patience=4,
     scheduler_factor=0.5,
     save_path="ISO_NE_Small_Dataset_Run2",
+    adjacency_save_path=None,
+    adjacency_plot_path=None,
+    feature_names=None,
     writer=None,
     weight_decay=1e-5,
-    lambda_smooth=0.01,     # <-- L2 temporal consistency weight
-    lambda_sparse=1e-4,     # <-- L1 sparsity weight (optional, kept from before)
+    l2_alpha=0.005,
+    demand_targeting_adjacency=False,
+    target_idx=None,
+    return_stats=False,
 ):
     model = model.to(device)
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
+    optimizer = _build_optimizer(model, lr, weight_decay)
     criterion = nn.MSELoss()
+
+    if demand_targeting_adjacency and target_idx is None and getattr(model, 'target_idx', None) is not None:
+        target_idx = model.target_idx
+
+    if adjacency_save_path is None:
+        adjacency_save_path = _adjacency_save_path(save_path)
+    if adjacency_plot_path is None:
+        adjacency_plot_path = _adjacency_plot_path(save_path)
 
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
         optimizer,
         mode='min',
         factor=scheduler_factor,
         patience=scheduler_patience,
-        min_lr=1e-6
+        min_lr=1e-7
     )
 
     best_val_loss = float('inf')
@@ -55,58 +202,56 @@ def train_model(
 
     if not os.path.exists(os.path.dirname(save_path)) and os.path.dirname(save_path):
         os.makedirs(os.path.dirname(save_path), exist_ok=True)
+    adj_dir = os.path.dirname(adjacency_save_path)
+    if adj_dir and not os.path.exists(adj_dir):
+        os.makedirs(adj_dir, exist_ok=True)
+    plot_dir = os.path.dirname(adjacency_plot_path)
+    if plot_dir and not os.path.exists(plot_dir):
+        os.makedirs(plot_dir, exist_ok=True)
 
     train_history = []
     val_history = []
     start_total_time = time.time()
     best_model_time = 0
+    best_epoch = 0
+    epochs_run = 0
+    epoch_times = []
+    peak_gpu_train_mb = 0.0
+    use_cuda = torch.cuda.is_available() and device == "cuda"
+    if use_cuda:
+        torch.cuda.reset_peak_memory_stats()
 
     for epoch in range(1, epochs + 1):
+        epoch_start = time.perf_counter()
+        epochs_run = epoch
         model.train()
-        total_loss = 0.0
+        total_mse = 0.0
         loop = tqdm(train_loader, desc=f"Epoch {epoch}/{epochs}")
 
         for X, Y in loop:
             X, Y = X.to(device), Y.to(device)
 
-            pred, A = model(X)          # <-- unpack (Y_hat, A)
-
-            # Prediction loss
-            pred_loss = criterion(pred, Y)
-            
-            # CRITICAL: Strong graph learning regularization
-            # The graph MUST learn diverse structures or prediction will suffer
-            off_diag_mask = 1 - torch.eye(A.size(1), device=A.device)
-            A_off_diag = A * off_diag_mask.unsqueeze(0)
-            
-            # Variance-based regularization: force structure diversity
-            A_mean = A_off_diag.mean()
-            variance = ((A_off_diag - A_mean) ** 2).mean()
-            
-            # Min-max spread: encourage edges to span the full [0.2, 0.8] range
-            # This forces learning of differentiated edge strengths
-            edge_spread = (A_off_diag.max() - A_off_diag.min())
-            
-            # Regularization terms weighted EQUALLY with prediction loss
-            # to create strong gradient pressure on graph parameters
-            graph_loss = (-variance * 100.0) + (-edge_spread * 50.0)
-            
-            # CRITICAL: Use weighted combination with EQUAL or HIGHER regularization
-            # If pred_loss ~0.17 and graph_loss contribution is ~-1, we need to scale
-            loss = pred_loss + graph_loss * 0.2  # Adjust multiplier to balance forces
+            pred, A = model(X)
+            mse_loss = criterion(pred, Y)
+            l2_reg = _adjacency_l2_reg(
+                A,
+                demand_targeting=demand_targeting_adjacency,
+                target_idx=target_idx,
+            )
+            loss = mse_loss + (l2_alpha * l2_reg)
 
             optimizer.zero_grad()
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimizer.step()
 
-            total_loss += loss.item()
-            loop.set_postfix(
-                loss=f"{loss.item():.4f}"
-            )
+            total_mse += mse_loss.item()
+            loop.set_postfix(mse=f"{mse_loss.item():.4f}")
 
-        avg_train_loss = total_loss / len(train_loader)
-        val_loss = validate(model, val_loader, criterion, device)
+        avg_train_loss = total_mse / len(train_loader)
+        val_loss, epoch_A = validate(
+            model, val_loader, criterion, device, return_adjacency=True
+        )
 
         train_history.append(avg_train_loss)
         val_history.append(val_loss)
@@ -114,9 +259,10 @@ def train_model(
         scheduler.step(val_loss)
         current_lr = optimizer.param_groups[0]['lr']
 
-        writer.add_scalar('Loss/train', avg_train_loss, epoch)
-        writer.add_scalar('Loss/validation', val_loss, epoch)
-        writer.add_scalar('LearningRate', current_lr, epoch)
+        if writer is not None:
+            writer.add_scalar('Loss/train', avg_train_loss, epoch)
+            writer.add_scalar('Loss/validation', val_loss, epoch)
+            writer.add_scalar('LearningRate', current_lr, epoch)
 
         print(
             f"Epoch {epoch:03d} | "
@@ -125,10 +271,27 @@ def train_model(
 
         if val_loss < best_val_loss:
             best_val_loss = val_loss
+            best_epoch = epoch
             epochs_no_improve = 0
             torch.save(model.state_dict(), save_path)
+            if epoch_A is not None:
+                np.save(adjacency_save_path, epoch_A)
+                _save_adjacency_plot(
+                    epoch_A,
+                    adjacency_plot_path,
+                    feature_names=feature_names,
+                    demand_targeting=demand_targeting_adjacency,
+                    target_idx=target_idx,
+                    val_loss=best_val_loss,
+                )
             best_model_time = time.time() - start_total_time
-            print(f"✅ New best model saved (Val Loss: {best_val_loss:.6f})")
+            print(
+                f"✅ New best model saved (Val Loss: {best_val_loss:.6f}) "
+                f"-> {save_path}"
+            )
+            if epoch_A is not None:
+                print(f"   Adjacency matrix updated -> {adjacency_save_path}")
+                print(f"   Adjacency plot updated   -> {adjacency_plot_path}")
         else:
             epochs_no_improve += 1
             print(f"⚠️  No improvement for {epochs_no_improve} epoch(s)")
@@ -136,6 +299,13 @@ def train_model(
         if epochs_no_improve >= patience:
             print(f"\n⛔ Early stopping triggered after {patience} epochs without improvement.")
             break
+
+        epoch_times.append(time.perf_counter() - epoch_start)
+        if use_cuda:
+            peak_gpu_train_mb = max(
+                peak_gpu_train_mb,
+                torch.cuda.max_memory_allocated() / (1024 ** 2),
+            )
 
     total_duration = time.time() - start_total_time
 
@@ -167,18 +337,49 @@ def train_model(
     plt.close()
 
     print("Training complete. TensorBoard logs saved.")
+
+    train_stats = {
+        "total_time_s": total_duration,
+        "time_to_best_s": best_model_time,
+        "best_epoch": best_epoch,
+        "total_epochs_run": epochs_run,
+        "best_val_loss": best_val_loss,
+        "avg_epoch_time_s": float(np.mean(epoch_times)) if epoch_times else 0.0,
+        "gpu_mem_training_mb": peak_gpu_train_mb,
+    }
+    if return_stats:
+        return model, train_stats
     return model
 
 
 # Testing function with TensorBoard logging
-def test_model(dataset, model, test_loader, device='cuda', writer=None):
+def test_model(dataset, model, test_loader, device='cuda', writer=None, return_metrics=False):
     model.eval()
     preds_all, trues_all = [], []
+    batch_times = []
+    peak_gpu_infer_mb = 0.0
+    use_cuda = torch.cuda.is_available() and device == "cuda"
+    if return_metrics and use_cuda:
+        torch.cuda.reset_peak_memory_stats()
 
     with torch.no_grad(), tqdm(test_loader, desc="Testing") as pbar:
         for X, Y in pbar:
             X, Y = X.to(device), Y.to(device)
-            out, _ = model(X)
+            if return_metrics:
+                if use_cuda:
+                    torch.cuda.synchronize()
+                t0 = time.perf_counter()
+                out, _ = model(X)
+                if use_cuda:
+                    torch.cuda.synchronize()
+                batch_times.append(time.perf_counter() - t0)
+                if use_cuda:
+                    peak_gpu_infer_mb = max(
+                        peak_gpu_infer_mb,
+                        torch.cuda.max_memory_allocated() / (1024 ** 2),
+                    )
+            else:
+                out, _ = model(X)
             preds_all.append(out.cpu().numpy())
             trues_all.append(Y.cpu().numpy())
 
@@ -219,7 +420,18 @@ def test_model(dataset, model, test_loader, device='cuda', writer=None):
         writer.add_scalar('Test_Metrics/R2', r2,  1)
         print("Test metrics logged to TensorBoard.")
 
-    return np.concatenate(preds_all, axis=0), np.concatenate(trues_all, axis=0)
+    preds = np.concatenate(preds_all, axis=0)
+    trues = np.concatenate(trues_all, axis=0)
+    if return_metrics:
+        test_metrics = {
+            "test_mse": float(mse_scaled),
+            "test_mae": float(mae_scaled),
+            "test_r2": float(r2_scaled),
+            "gpu_mem_inference_mb": peak_gpu_infer_mb,
+            "avg_inference_batch_ms": float(np.mean(batch_times)) * 1000 if batch_times else 0.0,
+        }
+        return preds, trues, test_metrics
+    return preds, trues
 
 def get_cluster_prior(dataset, n_clusters=5):
     """
