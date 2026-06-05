@@ -579,10 +579,12 @@ def test_model_stepwise(
         ax3.axvline(x=step, color='gray', linestyle=':', alpha=0.6)
 
     fig.tight_layout()  
+    # --- E. Save Results ---
     os.makedirs(output_dir, exist_ok=True)
     save_plot_path = os.path.join(output_dir, save_plot_name)
     metrics_csv_path = os.path.join(output_dir, metrics_csv_name)
 
+    # 1. Create the full dataframe (needed for plotting/completeness)
     metrics_df = pd.DataFrame({
         'step': steps_axis,
         'mse_scaled': mse_scaled_per_step,
@@ -590,6 +592,12 @@ def test_model_stepwise(
         'mse_unscaled': mse_per_step,
         'mae_unscaled': mae_per_step,
     })
+
+    # 2. Filter for only the steps you want to save
+    steps_to_report = [60, 120, 180, 240]
+    metrics_df_filtered = metrics_df[metrics_df['step'].isin(steps_to_report)]
+
+    # 3. Create the summary dataframe
     summary_df = pd.DataFrame([
         {
             'step': 'overall',
@@ -599,11 +607,11 @@ def test_model_stepwise(
             'mae_unscaled': overall_mae,
         }
     ])
-    pd.concat([metrics_df, summary_df], ignore_index=True).to_csv(metrics_csv_path, index=False)
+
+    # 4. Save the filtered results
+    pd.concat([metrics_df_filtered, summary_df], ignore_index=True).to_csv(metrics_csv_path, index=False)
 
     plt.savefig(save_plot_path, dpi=300)
     plt.show()
     print(f"\nPlots saved to {save_plot_path}")
-    print(f"Metrics saved to {metrics_csv_path}")
-
-    return preds_concat, trues_concat, mse_per_step, mae_per_step
+    print(f"Metrics (filtered) saved to {metrics_csv_path}")
