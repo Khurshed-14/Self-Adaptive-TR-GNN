@@ -73,5 +73,5 @@ def plot_learning_curves(file_map_or_path, output_filename="learning_curves.pdf"
 
 if __name__ == "__main__":
     
-    file_map = r"Self Adaptive\SH\logs\raw\base.csv"
-    plot_learning_curves(file_map_or_path=file_map,output_filename="Self Adaptive\SH\plots\learning_curve.pdf", title="Learning Curve")
+    file_map = r"Self Adaptive\AT\logs\raw\base.csv"
+    plot_learning_curves(file_map_or_path=file_map,output_filename="Self Adaptive\AT\plots\learning_curve.pdf", title="Learning Curve")

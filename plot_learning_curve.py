@@ -59,11 +59,10 @@ if __name__ == "__main__":
     
     # --- Usage Example ---
     files_to_plot = {
-        "GCN Layer 1": r"Self Adaptive\SH\logs\raw\gcn_1.csv",
-        "GCN Layer 2": r"Self Adaptive\SH\logs\raw\gcn_2.csv",
-        "GCN Layer 3": r"Self Adaptive\SH\logs\raw\gcn_3.csv",
-        "GCN Layer 5": r"Self Adaptive\SH\logs\raw\base.csv",
-        "GCN Layer 7": r"Self Adaptive\SH\logs\raw\gcn_7.csv",
+        "Kernel Size 3": r"Self Adaptive\AT\logs\raw\kernel_size_3.csv",
+        "Kernel Size 5": r"Self Adaptive\AT\logs\raw\kernel_size_5.csv",
+        "Kernel Size 7": r"Self Adaptive\AT\logs\raw\base.csv",
+        "Kernel Size 11": r"Self Adaptive\AT\logs\raw\kernel_size_11.csv",
     }
 
-    plot_learning_curves(files_to_plot,output_filename="Self Adaptive\SH\plots\gcn.pdf", title="GCN Layer Experiments Learning Curves")
+    plot_learning_curves(files_to_plot,output_filename="Self Adaptive\AT\plots\kernel_size.pdf", title="Kernel Size Experiments Learning Curves")
