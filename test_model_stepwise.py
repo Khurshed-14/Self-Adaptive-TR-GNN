@@ -7,15 +7,15 @@ import torch
 from sklearn.preprocessing import StandardScaler
 from torch.utils.data import DataLoader, Subset
 
-from dataset_classes import ISO_NE, SH_Dataset
+from dataset_classes import ISO_NE, SH_Dataset, AT
 from helper_functions import test_model_stepwise
 from models_with_temporal_graph import TR_GNN_MultiScale
 
 
 GRAPH_STRUCTURE = "full"
-MODEL_PATH = r"Self Adaptive\SH\models\Sens_Vary_kernel_size_to_11_GCN5_Hidden64_Kernel11_Dil3_best_model.pth"
-SAVE_PLOT_PATH = r"Self Adaptive\SH\stepwise\kernel_size_11.pdf"
-SAVE_METRICS_CSV_PATH = r"Self Adaptive\SH\stepwise\kernel_size_11.csv"
+MODEL_PATH = r"Self Adaptive\AT\models\kernel_size_11.pth"
+SAVE_PLOT_PATH = r"Self Adaptive\AT\stepwise\kernel_size_11.pdf"
+SAVE_METRICS_CSV_PATH = r"Self Adaptive\AT\stepwise\kernel_size_11.csv"
 
 
 def prepare_data_loaders(dataset, batch_size=32):
@@ -118,8 +118,8 @@ def main():
     args = parse_args()
     device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
 
-    dataset = SH_Dataset(
-        csv_path=r"C:\Users\khurs\Documents\GitHub\Load_Forecast_and_Balance\data\sh\sh_dataset.csv",
+    dataset = AT(
+        csv_path=r"data\at\AT Dataset.csv",
         T_in=72,
         T_out=240,
         lag_hours=[1, 12, 24, 168],
