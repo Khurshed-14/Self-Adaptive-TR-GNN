@@ -7,7 +7,7 @@ import time  # <--- Added import for timing
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 import matplotlib.pyplot as plt
 from sklearn.cluster import KMeans
-
+import pandas as pd
 
 
 def validate(model, loader, criterion, device, return_adjacency=False):
@@ -465,7 +465,16 @@ def get_cluster_prior(dataset, n_clusters=5):
     return torch.FloatTensor(prior_adj)
 
 
-def test_model_stepwise(dataset, model, test_loader, device='cuda', writer=None, save_plot_path="stepwise_error.png"):
+def test_model_stepwise(
+    dataset,
+    model,
+    test_loader,
+    device='cuda',
+    writer=None,
+    output_dir=".",
+    save_plot_name="stepwise_error.png",
+    metrics_csv_name="stepwise_metrics.csv",
+):
     model.eval()
     preds_all, trues_all = [], []
 
@@ -559,14 +568,42 @@ def test_model_stepwise(dataset, model, test_loader, device='cuda', writer=None,
     ax4.tick_params(axis='y', labelcolor=color_mae)
     ax3.set_title('Scaled Error Evolution')
 
+    for ax in (ax1, ax3):
+        ax.set_xlim(1, T_out)
+        ax.set_xticks([1, 60, 120, 180, 240])
+        ax.set_xticklabels(['1', '60', '120', '180', '240'])
+
     # Highlight the specific steps on both plots
     for step in steps_to_report:
         ax1.axvline(x=step, color='gray', linestyle=':', alpha=0.6)
         ax3.axvline(x=step, color='gray', linestyle=':', alpha=0.6)
 
     fig.tight_layout()  
+    os.makedirs(output_dir, exist_ok=True)
+    save_plot_path = os.path.join(output_dir, save_plot_name)
+    metrics_csv_path = os.path.join(output_dir, metrics_csv_name)
+
+    metrics_df = pd.DataFrame({
+        'step': steps_axis,
+        'mse_scaled': mse_scaled_per_step,
+        'mae_scaled': mae_scaled_per_step,
+        'mse_unscaled': mse_per_step,
+        'mae_unscaled': mae_per_step,
+    })
+    summary_df = pd.DataFrame([
+        {
+            'step': 'overall',
+            'mse_scaled': overall_mse_scaled,
+            'mae_scaled': overall_mae_scaled,
+            'mse_unscaled': overall_mse,
+            'mae_unscaled': overall_mae,
+        }
+    ])
+    pd.concat([metrics_df, summary_df], ignore_index=True).to_csv(metrics_csv_path, index=False)
+
     plt.savefig(save_plot_path, dpi=300)
     plt.show()
     print(f"\nPlots saved to {save_plot_path}")
+    print(f"Metrics saved to {metrics_csv_path}")
 
     return preds_concat, trues_concat, mse_per_step, mae_per_step
