@@ -91,7 +91,6 @@ def _save_adjacency_plot(
         mat = A_heads[h]
         last_im = ax.imshow(mat, cmap='YlOrRd', vmin=vmin, vmax=vmax, aspect='equal')
         
-        ax.set_title(f'Head {h + 1}' if num_heads > 1 else 'Adjacency', fontsize=10, fontweight='bold')
         ax.set_xticks(range(n))
         ax.set_yticks(range(n))
         ax.set_xticklabels(labels, rotation=55, ha='right', fontsize=6)
@@ -112,15 +111,6 @@ def _save_adjacency_plot(
     cax = fig.add_subplot(gs[0, -1])
     fig.colorbar(last_im, cax=cax, label='Adjacency Weight')
 
-    if demand_targeting and feature_names is not None and target_idx is not None:
-        target_name = feature_names[target_idx]
-        title = f'What Drives {target_name} — Best Model'
-    else:
-        title = 'Adjacency Matrix — Best Model'
-    if val_loss is not None:
-        title += f'\nVal Loss: {val_loss:.6f}'
-
-    fig.suptitle(title, fontsize=13, fontweight='bold', y=1.05)
     plt.savefig(plot_path, dpi=100, bbox_inches='tight')
     plt.close()
     
