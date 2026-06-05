@@ -8,6 +8,7 @@ from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 import matplotlib.pyplot as plt
 from sklearn.cluster import KMeans
 import pandas as pd
+import matplotlib.gridspec as gridspec
 
 
 def validate(model, loader, criterion, device, return_adjacency=False):
@@ -64,7 +65,7 @@ def _save_adjacency_plot(
     vmin=0.0,
     vmax=0.8,
 ):
-    """Save a labeled adjacency heatmap, overwriting plot_path on each call."""
+    """Save a labeled adjacency heatmap with a corrected, unified colorbar."""
     A_heads = _normalize_adjacency(A)
     num_heads, n, _ = A_heads.shape
 
@@ -77,31 +78,39 @@ def _save_adjacency_plot(
     if plot_dir and not os.path.exists(plot_dir):
         os.makedirs(plot_dir, exist_ok=True)
 
-    side = max(6.0, n * 0.35)
-    fig, axes = plt.subplots(1, num_heads, figsize=(side * num_heads + 0.8, side + 0.6))
-    if num_heads == 1:
-        axes = [axes]
-
+    # Use GridSpec to define a specific area for the colorbar
+    fig = plt.figure(figsize=(num_heads * 5 + 1.5, 6))
+    gs = gridspec.GridSpec(1, num_heads + 1, width_ratios=[1]*num_heads + [0.1])
+    
     mid = (vmin + vmax) * 0.5
     cell_fs = max(3.5, min(7.0, 90 / n))
+    
     last_im = None
-    for h, ax in enumerate(axes):
+    for h in range(num_heads):
+        ax = fig.add_subplot(gs[0, h])
         mat = A_heads[h]
         last_im = ax.imshow(mat, cmap='YlOrRd', vmin=vmin, vmax=vmax, aspect='equal')
+        
         ax.set_title(f'Head {h + 1}' if num_heads > 1 else 'Adjacency', fontsize=10, fontweight='bold')
         ax.set_xticks(range(n))
         ax.set_yticks(range(n))
         ax.set_xticklabels(labels, rotation=55, ha='right', fontsize=6)
         ax.set_yticklabels(labels, fontsize=6)
         ax.set_xlabel('From feature (j)', fontsize=7)
+        
         if h == 0:
             ax.set_ylabel('To feature (i)', fontsize=7)
+            
         for i in range(n):
             for j in range(n):
                 val = mat[i, j]
                 color = 'white' if val > mid else 'black'
                 ax.text(j, i, f'{val:.2f}', ha='center', va='center',
                         color=color, fontsize=cell_fs, fontweight='bold')
+
+    # Add colorbar to the designated slot in the gridspec
+    cax = fig.add_subplot(gs[0, -1])
+    fig.colorbar(last_im, cax=cax, label='Adjacency Weight')
 
     if demand_targeting and feature_names is not None and target_idx is not None:
         target_name = feature_names[target_idx]
@@ -111,12 +120,11 @@ def _save_adjacency_plot(
     if val_loss is not None:
         title += f'\nVal Loss: {val_loss:.6f}'
 
-    fig.suptitle(title, fontsize=13, fontweight='bold')
-    fig.colorbar(last_im, ax=axes, label='Adjacency Weight', shrink=0.8)
-    plt.tight_layout()
+    fig.suptitle(title, fontsize=13, fontweight='bold', y=1.05)
     plt.savefig(plot_path, dpi=100, bbox_inches='tight')
     plt.close()
-
+    
+    
 def _adjacency_l2_reg(A, demand_targeting=False, target_idx=None):
     """
     L2 penalty on off-diagonal adjacency weights.
