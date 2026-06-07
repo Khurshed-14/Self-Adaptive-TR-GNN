@@ -2,14 +2,15 @@ import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
 
-def plot_learning_curves(file_map_or_path, output_filename="learning_curves.pdf", title=None):
+def plot_learning_curves(file_map_or_path, output_filename="learning_curves.pdf", title=None, y_limit=None):
     """
     Plots train and validation loss from multiple CSV files.
     
     Parameters:
-    - file_map: Dictionary where keys are experiment names (e.g., 'dilation_1') 
-                and values are file paths (e.g., 'dilation_1.csv').
+    - file_map_or_path: Dictionary of files OR a single file path string.
     - output_filename: Name of the PDF file to save.
+    - title: Optional title for the plot.
+    - y_limit: Optional tuple for y-axis bounds (min, max), e.g., (0, 1.5).
     """
     
     # 1. Load data
@@ -39,6 +40,10 @@ def plot_learning_curves(file_map_or_path, output_filename="learning_curves.pdf"
         g.add_legend(title="Experiment")
         g.set_titles("{col_name}")
         g.set_axis_labels("Step", "Loss")
+        
+        # APPLY Y-LIMITS FOR FACETGRID HERE
+        if y_limit:
+            g.set(ylim=y_limit)
 
         # Optional overall title
         if title:
@@ -62,6 +67,11 @@ def plot_learning_curves(file_map_or_path, output_filename="learning_curves.pdf"
         ax = sns.lineplot(data=df_melted, x='Step', y='Loss Value', hue='Loss Type')
         ax.set_xlabel('Step')
         ax.set_ylabel('Loss')
+        
+        # APPLY Y-LIMITS FOR STANDARD AXES HERE
+        if y_limit:
+            ax.set_ylim(y_limit)
+            
         if title:
             ax.set_title(title)
     
@@ -73,5 +83,12 @@ def plot_learning_curves(file_map_or_path, output_filename="learning_curves.pdf"
 
 if __name__ == "__main__":
     
-    file_map = r"Self Adaptive\AT\logs\raw\base.csv"
-    plot_learning_curves(file_map_or_path=file_map,output_filename="Self Adaptive\AT\plots\learning_curve.pdf", title="Learning Curve")
+    file_map = r"notebooks\experiments\AT\logs\raw\gcn_2.csv"
+    
+    # Pass the y_limit tuple when calling the function
+    plot_learning_curves(
+        file_map_or_path=file_map,
+        output_filename=r"notebooks\experiments\AT\plots\learning_curve.pdf", 
+        title="Learning Curve",
+        y_limit=(0.05, 0.45) # Set your desired (min, max) here
+    )
