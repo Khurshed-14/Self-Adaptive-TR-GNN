@@ -89,7 +89,9 @@ def _save_adjacency_plot(
     for h in range(num_heads):
         ax = fig.add_subplot(gs[0, h])
         mat = A_heads[h]
-        last_im = ax.imshow(mat, cmap='YlOrRd', vmin=vmin, vmax=vmax, aspect='equal')
+        
+        # CHANGED: cmap='YlOrRd' to cmap='Blues'
+        last_im = ax.imshow(mat, cmap='Blues', vmin=vmin, vmax=vmax, aspect='equal')
         
         ax.set_xticks(range(n))
         ax.set_yticks(range(n))
@@ -547,6 +549,13 @@ def test_model_stepwise(
     ax1.set_ylabel('MSE (Unscaled)', color=color_mse)
     ax1.plot(steps_axis, mse_per_step, color=color_mse, label='MSE')
     ax1.tick_params(axis='y', labelcolor=color_mse)
+    
+    # --- ADD THESE TWO LINES ---
+    # Force scientific notation on the y-axis
+    ax1.ticklabel_format(style='sci', axis='y', scilimits=(0, 0))
+    # Color the '1e6' offset text to match the red axis
+    ax1.yaxis.get_offset_text().set_color(color_mse)
+    # ---------------------------
 
     ax2 = ax1.twinx()  
     ax2.set_ylabel('MAE (Unscaled)', color=color_mae)  
